@@ -143,3 +143,131 @@
   try{ if(localStorage.getItem('notes.compact')==='1'){ compactToggle.checked=true; document.body.classList.add('compact'); } }catch(e){}
   select(dc, ds);
 })();
+
+/* ---------------------------------------------------------------------
+   Question-type filter.
+   Tags every .qa-item as an MCQ or a Fill-in-the-Blanks item, then lets
+   the toolbar switch each type on/off (screen + PDF/print).
+
+   How an item is tagged:
+     1. It has a <ul class="mcq-options"> or "(MCQ)" in the question -> mcq
+     2. Otherwise the nearest HTML comment above it decides, e.g.
+        <!-- Fill in the Blanks -->  /  <!-- MCQs -->
+     3. If no comment precedes it, "_____" in the question -> blank
+   Any other comment (e.g. <!-- Short Answer Questions -->) clears the
+   section, so short answers are never mistaken for blanks.
+------------------------------------------------------------------------ */
+(function () {
+  var MCQ_RE   = /\(\s*mcq\s*\)|multiple\s+choice|\bmcqs?\b/i;
+  var BLANK_RE = /_{3,}|fill\s+in\s+the\s+blank/i;
+  var STORE_MCQ = 'notes.showMcq', STORE_BLANK = 'notes.showBlank';
+
+  function commentType(txt) {
+    if (MCQ_RE.test(txt)) return 'mcq';
+    if (BLANK_RE.test(txt)) return 'blank';
+    return 'other';
+  }
+
+  function tagItems() {
+    var items = document.querySelectorAll('.qa-item');
+    var parents = [], i, p;
+    for (i = 0; i < items.length; i++) {
+      p = items[i].parentNode;
+      if (parents.indexOf(p) === -1) parents.push(p);
+    }
+    parents.forEach(function (parent) {
+      var section = null; // null = no comment seen yet
+      [].forEach.call(parent.childNodes, function (node) {
+        if (node.nodeType === 8) { section = commentType(node.nodeValue); return; }
+        if (node.nodeType !== 1 || !node.classList || !node.classList.contains('qa-item')) return;
+        var q = node.querySelector('.question');
+        var qt = q ? q.textContent : '';
+        var type = null;
+        if (node.querySelector('.mcq-options') || MCQ_RE.test(qt)) type = 'mcq';
+        else if (section === 'mcq' || section === 'blank') type = section;
+        else if (section === null && BLANK_RE.test(qt)) type = 'blank';
+        if (type) node.setAttribute('data-qtype', type);
+      });
+    });
+  }
+
+  function buildToggles() {
+    var options = document.querySelector('.print-options');
+    if (!options) return null;
+    var group = document.createElement('div');
+    group.className = 'sel-group';
+    var label = document.createElement('span');
+    label.className = 'sel-label';
+    label.textContent = 'Questions:';
+    group.appendChild(label);
+
+    var made = {};
+    [['mcq', '🔘 MCQs'], ['blank', '✏️ Fill in the Blanks']].forEach(function (pair) {
+      var l = document.createElement('label');
+      l.className = 'opt-checkbox';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      var s = document.createElement('span');
+      s.textContent = pair[1];
+      l.appendChild(cb); l.appendChild(s);
+      group.appendChild(l);
+      made[pair[0]] = cb;
+    });
+
+    // Put it just before the "Modules:" group when possible.
+    var modules = document.getElementById('moduleList');
+    var anchor = modules ? modules.parentNode : null;
+    if (anchor && anchor.parentNode === options) options.insertBefore(group, anchor);
+    else options.appendChild(group);
+    return made;
+  }
+
+  function sectionIsOnlyQuestions(sec) {
+    var only = true;
+    [].forEach.call(sec.children, function (ch) {
+      if (ch.classList.contains('qa-item')) return;
+      if (ch.classList.contains('session-title')) return;
+      only = false;
+    });
+    return only;
+  }
+
+  function apply(cbs) {
+    ['mcq', 'blank'].forEach(function (type) {
+      var on = cbs[type].checked;
+      [].forEach.call(document.querySelectorAll('.qa-item[data-qtype="' + type + '"]'), function (it) {
+        it.classList.toggle('is-hidden', !on);
+      });
+    });
+    // Don't leave a session heading stranded above nothing.
+    [].forEach.call(document.querySelectorAll('.qa-section'), function (sec) {
+      var items = sec.querySelectorAll('.qa-item');
+      if (!items.length || !sectionIsOnlyQuestions(sec)) return;
+      var anyVisible = [].some.call(items, function (it) { return !it.classList.contains('is-hidden'); });
+      sec.classList.toggle('is-hidden', !anyVisible);
+    });
+  }
+
+  function init() {
+    tagItems();
+    var cbs = buildToggles();
+    if (!cbs) return;
+    try {
+      if (localStorage.getItem(STORE_MCQ) === '0') cbs.mcq.checked = false;
+      if (localStorage.getItem(STORE_BLANK) === '0') cbs.blank.checked = false;
+    } catch (e) {}
+    cbs.mcq.addEventListener('change', function () {
+      try { localStorage.setItem(STORE_MCQ, cbs.mcq.checked ? '1' : '0'); } catch (e) {}
+      apply(cbs);
+    });
+    cbs.blank.addEventListener('change', function () {
+      try { localStorage.setItem(STORE_BLANK, cbs.blank.checked ? '1' : '0'); } catch (e) {}
+      apply(cbs);
+    });
+    apply(cbs);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
